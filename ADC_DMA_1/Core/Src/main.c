@@ -39,7 +39,8 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
+#define BUF_LEN 2500
+#define BUF_LEN_HALF 1250
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -54,37 +55,40 @@ DMA_HandleTypeDef hdma_adc1;
 TIM_HandleTypeDef htim2;
 
 /* USER CODE BEGIN PV */
-uint16_t buffer[500]; // buffer
+uint16_t buffer[BUF_LEN];
+
 uint8_t fill = 0; // 0: buffer vazio; 1: primeira metade cheia; 2: segunda metade cheia
 
 // flags de quantidade de leitura
-uint8_t teste1 = 0;
-uint8_t teste2 = 0;
+uint8_t sample1 = 0;
+uint8_t sample2 = 1;
 
 // frequency sample
 uint8_t fs = 250;
 
-int buffer_work = 250;
 // Variaveis do prefiltering
-float* filtered_ecg = NULL;
+float filtered_ecg[BUF_LEN_HALF];
 uint16_t total_taps = 0;
-float* diff_C = NULL;
-float* diff_E = NULL;
-int* engzee_detection = NULL;
-int* christov_detection = NULL;
+
+float diff_C[BUF_LEN_HALF - 2];
+float diff_E[BUF_LEN_HALF];
+float diff_filtered_C[BUF_LEN_HALF - 2];
+float diff_filtered_E[BUF_LEN_HALF];
+
+int engzee_detection[320];
+int christov_detection[320];
 int len_engzee = 0;
 int len_christov = 0;
-int* detections = NULL;
-// Variaveis do prefiltering
-//float* filtered_ecg;
-//uint16_t total_taps = 0;
-//float* diff_C;
-//float* diff_E;
-//int* engzee_detection;
-//int* christov_detection;
-//int len_engzee = 0;
-//int len_christov = 0;
-//int* detections;
+int detections[320];
+int len_detections = 0;
+
+float MM_engzee[5] = {0};
+float MM_christov[5] = {0};
+float RR[5] = {0};
+int R_idx = 0;
+int thi_list[320];
+
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -137,150 +141,135 @@ int main(void)
 	/* USER CODE BEGIN 2 */
 	HAL_TIM_Base_Start(&htim2);
 
-	// Atraso de 5 segundos antes de iniciar a aquisição de dados
-	HAL_Delay(5000);
+	// Atraso de 3 segundos antes de iniciar a aquisição de dados (para teste)
+	HAL_Delay(3000);
+	//while(HAL_GPIO_ReadPin(PB_GPIO_Port, PB_Pin)); // Quando utilizar o botão para inciar a coleta
 
-	HAL_ADC_Start_DMA(&hadc1, buffer, 500);
+	HAL_ADC_Start_DMA(&hadc1, buffer, BUF_LEN);
 	while(fill == 0);
 	/* USER CODE END 2 */
 
 	/* Infinite loop */
 	/* USER CODE BEGIN WHILE */
 	while (1) {
-		/* USER CODE BEGIN 3 */
 		/**
 		 * @brief Call pre-filtering
-		 * @input Converted signal
-		 * @output Filtered signal
+		 * @input Digital input, size of half buffer
+		 * @output Filtered input
 		 */
-		filtered_ecg = prefiltering(&buffer[0], buffer_work, &total_taps);
+		prefiltering(&buffer[0], BUF_LEN_HALF, &total_taps, filtered_ecg);
 		/**
 		 * @brief Christov Differentiation
-		 * @input Signal after prefiltered
-		 * @output Signal differentiated
+		 * @input input prefiltered, size of half buffer
+		 * @output signal differentiated - Christov
 		 */
-		diff_C = christov_differentiation(filtered_ecg, buffer_work);
+		christov_differentiation(filtered_ecg, diff_C, BUF_LEN_HALF);
 		/**
 		 * @brief Engzee Differentiation
-		 * @input Signal after prefiltered
-		 * @output Signal differentiated
+		 * @input input prefiltered, size of half buffer
+		 * @output signal differentiated - Engzee
 		 */
-		diff_E = engzee_differentiation(filtered_ecg, buffer_work);
+		engzee_differentiation(filtered_ecg, diff_E, BUF_LEN_HALF);
 		/**
 		 * @brief Call christov_noise to diff C
-		 * @input Christov differentiated vector
-		 * @output Christov filtered vector
+		 * @input signal differentiated - Christov, size of half buffer, total taps
+		 * @output Christov filtered signal
 		 */
-		diff_C = chistov_noise(diff_C, total_taps, buffer_work - 2);
+		chistov_noise(diff_C, diff_filtered_C, total_taps, BUF_LEN_HALF - 2);
 		/**
 		 * @brief Call christov_noise to diff E
-		 * @input Engzee differentiated vector
-		 * @output Engzee filtered vector
+		 * @input signal differentiated - Engzee, size of half buffer, total taps
+		 * @output Engzee filtered signal
 		 */
-		diff_E = chistov_noise(diff_E, total_taps, buffer_work);
+		chistov_noise(diff_E, diff_filtered_E, total_taps, BUF_LEN_HALF);
 		/**
 		 * @brief Call engzee_lourenco to find engzee detections
-		 * @input Engzee filtered vector
+		 * @input Engzee filtered signal, digital input, len half buffer, relative sample, frequency sample,
+		 * parameters from past detection
 		 * @output engzee detections
 		 */
-		engzee_detection = engzee_lourenco(&buffer[0], diff_E, buffer_work, fs, &len_engzee);//, len_engzee);
+		engzee_lourenco(&buffer[0], diff_filtered_E, BUF_LEN_HALF, sample1, fs, engzee_detection, &len_engzee, MM_engzee, thi_list);
 		/**
 		 * @brief Call christov to find christov detections
-		 * @input Christov filtered vector
+		 * @input Christov filtered signal, digital input, len half buffer, relative sample, frequency sample,
+		 * parameters from past detection
 		 * @output christov detections
 		 */
-		christov_detection = christov(&buffer[0], diff_C, buffer_work - 2, fs, &len_christov);
-		/**
-		 * @brief Call tradeoff
-		 * @input Christov and Engzee detections and sizes
-		 * @output Tradeoff detections
-		 */
-		detections = tradeoff(engzee_detection, len_engzee, christov_detection, len_christov);
+		christov(&buffer[0], diff_filtered_C, BUF_LEN_HALF - 2, sample1, fs, christov_detection, &len_christov, MM_christov, RR, &R_idx);
 
 		total_taps = 0;
-		teste1 += 1;
-		//		if (teste1 == 1){
-		//			printf("teste");
-		//		}
-		// processa buffer de 0 a 999
-		// jogar no vetor final cada pico encontrado
+		sample1 += 2;
 		while(fill == 1);
-		// "Fazer uma soma de 1000 para transferir pro vetor final"
-		// processa buffer de 1000 a 1999
-		// jogar no vetor final cada pico
+
 		/**
 		 * @brief Call pre-filtering
-		 * @input Converted signal
-		 * @output Filtered signal
+		 * @input Digital input, size of half buffer
+		 * @output Filtered input
 		 */
-		filtered_ecg = prefiltering(&buffer[250], buffer_work, &total_taps);
+		prefiltering(&buffer[BUF_LEN_HALF], BUF_LEN_HALF, &total_taps, filtered_ecg);
 		/**
 		 * @brief Christov Differentiation
-		 * @input Signal after prefiltered
-		 * @output Signal differentiated
+		 * @input input prefiltered, size of half buffer
+		 * @output signal differentiated - Christov
 		 */
-		diff_C = christov_differentiation(filtered_ecg, buffer_work);
+		christov_differentiation(filtered_ecg, diff_C, BUF_LEN_HALF);
 		/**
 		 * @brief Engzee Differentiation
-		 * @input Signal after prefiltered
-		 * @output Signal differentiated
+		 * @input input prefiltered, size of half buffer
+		 * @output signal differentiated - Engzee
 		 */
-		diff_E = engzee_differentiation(filtered_ecg, buffer_work);
+		engzee_differentiation(filtered_ecg, diff_E, BUF_LEN_HALF);
 		/**
 		 * @brief Call christov_noise to diff C
-		 * @input Christov differentiated vector
-		 * @output Christov filtered vector
+		 * @input signal differentiated - Christov, size of half buffer, total taps
+		 * @output Christov filtered signal
 		 */
-		diff_C = chistov_noise(diff_C, total_taps, buffer_work - 2);
+		chistov_noise(diff_C, diff_filtered_C, total_taps, BUF_LEN_HALF - 2);
 		/**
 		 * @brief Call christov_noise to diff E
-		 * @input Engzee differentiated vector
-		 * @output Engzee filtered vector
+		 * @input signal differentiated - Engzee, size of half buffer, total taps
+		 * @output Engzee filtered signal
 		 */
-		diff_E = chistov_noise(diff_E, total_taps, buffer_work);
+		chistov_noise(diff_E, diff_filtered_E, total_taps, BUF_LEN_HALF);
 		/**
 		 * @brief Call engzee_lourenco to find engzee detections
-		 * @input Engzee filtered vector
+		 * @input Engzee filtered signal, digital input, len half buffer, relative sample, frequency sample,
+		 * parameters from past detection
 		 * @output engzee detections
 		 */
-		engzee_detection = engzee_lourenco(&buffer[250], diff_E, buffer_work, fs, &len_engzee);//, len_engzee);
+		engzee_lourenco(&buffer[BUF_LEN_HALF], diff_filtered_E, BUF_LEN_HALF, sample2, fs, engzee_detection, &len_engzee, MM_engzee, thi_list);
 		/**
 		 * @brief Call christov to find christov detections
-		 * @input Christov filtered vector
+		 * @input Christov filtered signal, digital input, len half buffer, relative sample, frequency sample,
+		 * parameters from past detection
 		 * @output christov detections
 		 */
-		christov_detection = christov(&buffer[250], diff_C, buffer_work - 2, fs, &len_christov);
-		/**
-		 * @brief Call tradeoff
-		 * @input Christov and Engzee detections and sizes
-		 * @output Tradeoff detections
-		 */
-		detections = tradeoff(engzee_detection, len_engzee, christov_detection, len_christov);
+		christov(&buffer[BUF_LEN_HALF], diff_filtered_C, BUF_LEN_HALF - 2, sample2, fs, christov_detection, &len_christov, MM_christov, RR, &R_idx);
 
 		total_taps = 0;
-		teste2 += 1;
-
-		free(filtered_ecg);
-		free(diff_C);
-		free(diff_E);
-		free(engzee_detection);
-		free(christov_detection);
-		//		free(detections);
-		//		if (teste2 == 1){
-		//			printf("teste");
-		//		}
+		sample2 += 2;
+		if (sample2 == 25){
+			fill = 3;
+		}
 		while(fill == 2);
 
-		// "Fazer uma soma de 1000 para transferir pro vetor final"
-
-		// Fazer uma condição de parada
-
-		// Se atentar para fazer rodar "pegando os parâmetros" da metade anterior, para não perdermos
-		// sempre o primeiro pico
+		if(fill == 3){
+			/**
+			 * @brief Call tradeoff
+			 * @input Christov and Engzee detections and sizes
+			 * @output Tradeoff detections
+			 */
+			tradeoff(engzee_detection, len_engzee, christov_detection, len_christov, detections, &len_detections);
+			break;
+		}
 		/* USER CODE END 3 */
 	}
 	/* USER CODE END WHILE */
+
+	/* USER CODE BEGIN 3 */
 }
+/* USER CODE END 3 */
+
 
 /**
  * @brief System Clock Configuration
@@ -366,7 +355,7 @@ static void MX_ADC1_Init(void)
 
 	/** Configure for the selected ADC regular channel its corresponding rank in the sequencer and its sample time.
 	 */
-	sConfig.Channel = ADC_CHANNEL_0;
+	sConfig.Channel = ADC_CHANNEL_1;
 	sConfig.Rank = 1;
 	sConfig.SamplingTime = ADC_SAMPLETIME_3CYCLES;
 	if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
@@ -447,6 +436,7 @@ static void MX_DMA_Init(void)
  */
 static void MX_GPIO_Init(void)
 {
+	GPIO_InitTypeDef GPIO_InitStruct = {0};
 	/* USER CODE BEGIN MX_GPIO_Init_1 */
 	/* USER CODE END MX_GPIO_Init_1 */
 
@@ -454,6 +444,12 @@ static void MX_GPIO_Init(void)
 	__HAL_RCC_GPIOC_CLK_ENABLE();
 	__HAL_RCC_GPIOH_CLK_ENABLE();
 	__HAL_RCC_GPIOA_CLK_ENABLE();
+
+	/*Configure GPIO pin : PB_Pin */
+	GPIO_InitStruct.Pin = PB_Pin;
+	GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+	GPIO_InitStruct.Pull = GPIO_PULLUP;
+	HAL_GPIO_Init(PB_GPIO_Port, &GPIO_InitStruct);
 
 	/* USER CODE BEGIN MX_GPIO_Init_2 */
 	/* USER CODE END MX_GPIO_Init_2 */

@@ -15,6 +15,6 @@
 #include <math.h>
 #include "mathematics.h"
 
-int* tradeoff(int* engzee_detection, int len_engzee, int* christov_detection, int len_christov);
+void tradeoff(int* engzee_detection, int len_engzee, int* christov_detection, int len_christov, int* detections, int* len_detections);
 
 #endif /* TRADEOFF_H_ */

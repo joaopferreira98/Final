@@ -12,8 +12,8 @@
 #include <math.h>
 
 /**
- * @brief Max value inside an array
- * @input Array
+ * @brief Max value inside an array with size
+ * @input Array, size of array
  * @output Max value
  */
 float max(float* arr, int size) {
@@ -27,8 +27,8 @@ float max(float* arr, int size) {
 }
 
 /**
- * @brief Max value inside an array
- * @input Array
+ * @brief Max value inside an array with start and end parameters
+ * @input Array, start and end limits
  * @output Max value
  */
 float max2(float* arr, int start, int end) {
@@ -43,6 +43,11 @@ float max2(float* arr, int start, int end) {
 	return max_val;
 }
 
+/**
+ * @brief Index Max value inside an array
+ * @input Array, size of array
+ * @output Max Index value
+ */
 int indexMax(int* arr, int size){
 	int max_val = arr[0];
 	int index = 0;
@@ -55,11 +60,20 @@ int indexMax(int* arr, int size){
 	return index;
 }
 
-// Function to compare integers for qsort
-int compare_ints(const void* a, const void* b) {
+/**
+ * @brief Function to compare integers for qsort
+ * @input two values to be compared
+ * @output Result of comparison
+ */
+int compareInts(const void* a, const void* b) {
 	return (*(int*)a - *(int*)b);
 }
-// Function to find intersection of two arrays
+
+/**
+ * @brief Function to intersection of two arrays
+ * @input two arrays to be compared
+ * @output intersection of two arrays
+ */
 int* intersect(int* arr1, int len1, int* arr2, int len2, int* result_len) {
 	int* result = (int*)malloc(sizeof(int) * (len1 > len2 ? len2 : len1));
 	int idx = 0;

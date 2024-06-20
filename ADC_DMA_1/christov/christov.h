@@ -16,8 +16,8 @@
 #include "mathematics.h"
 #include "prefiltering.h"
 
-float* christov_differentiation(float *input, int length);
-float* chistov_noise(float *diff_signal, uint16_t total_taps, int length);
-int* christov(uint16_t* mock_input, float* MA3, int length, int fs, int  *len_detection);
+void christov_differentiation(float *input, float *diff_C, int length);
+void chistov_noise(float *diff_signal, float *diff_filtered_signal, uint16_t total_taps, int length);
+void christov(uint16_t* mock_input, float* MA3, int length, int sample, int fs, int* QRS, int *len_detection, float *MM, float *RR, int *R_idx);
 
 #endif /* CHRISTOV_H_ */
